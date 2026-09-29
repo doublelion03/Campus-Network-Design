@@ -1,0 +1,47 @@
+Design Document
+1. Requirements: 13-item list
+
+Budget — minimum-cost implementation
+Terminal types — wired and wireless
+Terminal counts — (F1: 10 wired/100 wireless) (F2 & F3: 200 wired/50 wireless each) (reserved floors: 500 wired/200 wireless)
+Network management — SNMP, unified
+Availability — Layer 3 redundancy and failover
+Security — traffic must be controlled
+Internet access — static IP at egress
+Expansion — no device replacement when new floors come online
+Wired VLANs — Servers, GM Office, Admin, Marketing, R&D, per-floor L2 mgmt, reserved interconnect VLANs
+Wireless VLANs — separate client VLAN and separate management VLAN per floor
+IP/DHCP/gateway — Gateway stays on  aggregate layers while dhcp server handsout ip 
+WLAN — single AC managing all APs; F1 registers at L2, F2/F3 at L3; one SSID per floor, WPA-WPA2+PSK+AES, unique password per floor
+Security/egress — guest SSID blocked from intranet; only wireless reaches Internet; static public IP; NAT exposes only the web server (port 80)
+Management — SNMPv3 with auth+encryption; all devices reachable by NMS; alarms reported
+
+(Numbering kept as a flat list here for traceability back to the README's Met/Next-Steps split, which references these by number.)
+
+2. VLAN & IP Plan
+
+See table in README — reproduced in full in docs/vlan-ip-plan.md with router IDs and interconnect subnets.
+
+3. DHCP Plan
+
+Server: single DHCP/DNS server at 10.100.0.10. All dynamic pools relayed via ip helper-address 10.100.0.10 on the owning VLAN's SVI (Core for wireless VLANs, floor AGG for wired department VLANs).
+
+Pool	          VLAN	Network      	Gateway    	Start	DNS
+F1-WIRED	      105	  10.105.0.0/24	10.105.0.1	.4  	10.100.0.10
+GM-OFFICE	      110	  10.110.0.0/24	10.110.0.1	.4	  10.100.0.10
+ADMIN-DEPT    	120	  10.120.0.0/24	10.120.0.1	.4	  10.100.0.10
+MARKETING      	130	  10.130.0.0/24	10.130.0.1	.4	  10.100.0.10
+RD-DEPT	        140	  10.140.0.0/24	10.140.0.1	.4	  10.100.0.10
+GUEST-WIFI-F1	  150	  10.150.0.0/24	10.150.0.1	.4	  10.100.0.10
+STAFF-WIFI-F2	  160	  10.160.0.0/24	10.160.0.1	.4	  10.100.0.10
+STAFF-WIFI-F3	  170	  10.170.0.0/24	10.170.0.1	.4	  10.100.0.10
+
+Deliberately static, not DHCP: VLANs 10/20/30 (per-floor L2 mgmt), 100 (servers), 500 (AP mgmt — all three floors, plus WLC mgmt at Core). Requirement 12 explicitly calls for static management IPs; extending that same logic to the AP-mgmt VLAN keeps infrastructure addressing predictable rather than lease-dependent.
+
+Design decision — centralization vs. per-switch DHCP: the reference requirement implies each floor's AGG switch runs its own local DHCP function. This build instead centralizes all leases at one server and relays via helper-address from the correct gateway device. Rationale: single source of truth for lease tracking, consistent DNS assignment, and one point of administration — standard practice in a real deployment of this size, and the client-facing behavior (gateway placement, subnet per floor) still matches the requirement exactly.
+
+4. Key Architecture Decisions
+L3 boundary at Aggregation, for wired department VLANs: avoids a routed boundary sitting behind an STP-blocked "cold standby" link, keeps failover fast.
+HSRP: matches the redundancy model used consistently across Core and Aggregation; version 2 required network-wide once VLAN 500's group number (500) exceeded the 255 ceiling for HSRPv1.
+Two-GE-port hardware constraint: every switch (access/agg/core/server) has only 2 Gigabit ports, rest FastEthernet — this shaped every uplink assignment (Gig reserved for Core-to-Core and Core-to-Edge; all Agg-to-Core and Agg-to-Access links on FastEthernet).
+ASA 5506 at the edge.
